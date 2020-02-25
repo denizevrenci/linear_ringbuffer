@@ -1,5 +1,6 @@
 #include <bev/linear_ringbuffer.hpp>
 #include <bev/io_buffer.hpp>
+#include <bev/spsc_ring_buffer.hpp>
 
 #include <iostream>
 #include <thread>
@@ -27,6 +28,77 @@ void benchmark_linear_ringbuffer()
 
         n = ::write(out, b.read_head(), b.size());
         if (n <= 0) break;
+        b.consume(n);
+
+        s_write_bytes.fetch_add(n, std::memory_order_relaxed);
+    }
+
+    perror("read or write:");
+}
+
+void benchmark_linear_ringbuffer_read(bev::linear_ringbuffer& b)
+{
+    const int in = fileno(stdin);
+
+    // TODO - Test if a version using select/poll/epoll would be faster.
+    while (true) {
+        auto n = ::read(in, b.write_head(), b.free_size());
+        if (n < 0) break;
+        b.commit(n);
+
+        s_read_bytes.fetch_add(n, std::memory_order_relaxed);
+    }
+
+    perror("read or write:");
+}
+
+void benchmark_linear_ringbuffer_write(bev::linear_ringbuffer& b)
+{
+    const int out = fileno(stdout);
+
+    // TODO - Test if a version using select/poll/epoll would be faster.
+    while (true) {
+        auto n = ::write(out, b.read_head(), b.size());
+        if (n < 0) break;
+        b.consume(n);
+
+        s_write_bytes.fetch_add(n, std::memory_order_relaxed);
+    }
+
+    perror("read or write:");
+}
+
+void benchmark_spsc_ringbuffer_read(q::util::spsc_ring_buffer<>& b)
+{
+    const int in = fileno(stdin);
+
+    // TODO - Test if a version using select/poll/epoll would be faster.
+    while (true) {
+        auto head = b.try_claim(8 * 1024);
+        while (!head)
+        {
+            std::this_thread::yield();
+            head = b.try_claim(8 * 1024);
+        }
+        auto n = ::read(in, head, 8 * 1024);
+        if (n < 0) break;
+        b.commit();
+
+        s_read_bytes.fetch_add(n, std::memory_order_relaxed);
+    }
+
+    perror("read or write:");
+}
+
+void benchmark_spsc_ringbuffer_write(q::util::spsc_ring_buffer<>& b)
+{
+    const int out = fileno(stdout);
+
+    // TODO - Test if a version using select/poll/epoll would be faster.
+    while (true) {
+        const auto [head, tail] = b.try_read();
+        auto n = ::write(out, head, tail - head);
+        if (n < 0) break;
         b.consume(n);
 
         s_write_bytes.fetch_add(n, std::memory_order_relaxed);
@@ -69,12 +141,20 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
+    bev::linear_ringbuffer b(64*1024);
+    //q::util::spsc_ring_buffer b(64*1024);
+    std::thread *ithread;
+    std::thread *othread;
+    /*
     std::thread *iothread;
     if (std::string(argv[1]) == "io_buffer") {
         iothread = new std::thread(benchmark_io_buffer);
-    } else {
-        iothread = new std::thread(benchmark_linear_ringbuffer);
-    }
+    } else {*/
+    ithread = new std::thread(benchmark_linear_ringbuffer_read, std::ref(b));
+    othread = new std::thread(benchmark_linear_ringbuffer_write, std::ref(b));
+    //ithread = new std::thread(benchmark_spsc_ringbuffer_read, std::ref(b));
+    //othread = new std::thread(benchmark_spsc_ringbuffer_write, std::ref(b));
+    //}
 
     int64_t read_old = s_read_bytes;
     int64_t write_old = s_write_bytes;
@@ -87,5 +167,6 @@ int main(int argc, char* argv[]) {
         write_old = write;
     }
 
-    iothread->join();
+    ithread->join();
+    othread->join();
 }

@@ -6,8 +6,10 @@ HEADERS = \
 
 all: benchmark tests
 
+CXXFLAGS += -Wall -Wextra -pedantic
+
 benchmark: benchmark.cpp $(HEADERS)
-	g++ $< -O2 -g3 -I./include -o $@ $(CFLAGS) $(CXXFLAGS) $(BENCHMARK_LIBS)
+	g++-9 $< -O3 -DNDEBUG -std=c++17 -I./include -o $@ $(CFLAGS) $(CXXFLAGS) $(BENCHMARK_LIBS)
 
 tests: tests.cpp $(HEADERS)
 	g++ $< -g3 -I./include -o $@ $(CFLAGS) $(CXXFLAGS)
